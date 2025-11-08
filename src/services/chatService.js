@@ -45,6 +45,12 @@ class ChatService {
       });
 
       if (!response.ok) {
+        // Si es error de autenticación, lanzar un error especial
+        if (response.status === 401 || response.status === 403) {
+          const authError = new Error("Sesión expirada");
+          authError.authError = true;
+          throw authError;
+        }
         throw new Error(`Error del servidor: ${response.status}`);
       }
 
@@ -56,6 +62,51 @@ class ChatService {
       );
     } catch (error) {
       console.error("Error en chatService:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Envía un mensaje al chat y recibe la respuesta completa (sin streaming)
+   * @param {string} message - Mensaje del usuario
+   * @param {number|null} conversationId - ID de la conversación actual
+   * @param {string} accessToken - Token de autenticación
+   * @returns {Promise<Object>} - Respuesta completa del chat
+   */
+  async sendMessageNormal(message, conversationId, accessToken) {
+    try {
+      const requestBody = {
+        message: message,
+      };
+
+      if (conversationId !== null && conversationId !== undefined) {
+        requestBody.conversation_id = conversationId;
+      } else {
+        requestBody.conversation_id = 0;
+      }
+
+      const response = await fetch(`${API_URL}/api/v1/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        // Si es error de autenticación, lanzar un error especial
+        if (response.status === 401 || response.status === 403) {
+          const authError = new Error("Sesión expirada");
+          authError.authError = true;
+          throw authError;
+        }
+        throw new Error(`Error del servidor: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error("Error en chatService (normal):", error);
       throw error;
     }
   }
