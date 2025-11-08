@@ -20,6 +20,12 @@ class ConversationService {
       });
 
       if (!response.ok) {
+        // Si es error de autenticación, lanzar un error especial
+        if (response.status === 401 || response.status === 403) {
+          const authError = new Error("Sesión expirada");
+          authError.authError = true;
+          throw authError;
+        }
         throw new Error(`Error al obtener conversaciones: ${response.status}`);
       }
 
@@ -51,6 +57,12 @@ class ConversationService {
       );
 
       if (!response.ok) {
+        // Si es error de autenticación, lanzar un error especial
+        if (response.status === 401 || response.status === 403) {
+          const authError = new Error("Sesión expirada");
+          authError.authError = true;
+          throw authError;
+        }
         throw new Error(`Error al obtener conversación: ${response.status}`);
       }
 
@@ -58,6 +70,42 @@ class ConversationService {
       return data;
     } catch (error) {
       console.error("Error en conversationService.getConversationById:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Elimina todas las conversaciones del usuario autenticado
+   * @param {string} accessToken - Token de autenticación
+   * @returns {Promise<Object>} Mensaje de éxito con cantidad de conversaciones eliminadas
+   */
+  async deleteAllConversations(accessToken) {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/chat/conversations`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        // Si es error de autenticación, lanzar un error especial
+        if (response.status === 401 || response.status === 403) {
+          const authError = new Error("Sesión expirada");
+          authError.authError = true;
+          throw authError;
+        }
+        throw new Error(`Error al eliminar conversaciones: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error(
+        "Error en conversationService.deleteAllConversations:",
+        error
+      );
       throw error;
     }
   }

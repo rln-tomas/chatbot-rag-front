@@ -4,10 +4,11 @@ import useAuthStore from "../store/authStore";
 import chatService from "../services/chatService";
 import conversationService from "../services/conversationService";
 import StreamingText from "../components/StreamingText";
+import ReactMarkdown from "react-markdown";
 
 function ChatPage() {
   const navigate = useNavigate();
-  const { user, accessToken, logout } = useAuthStore();
+  const { user, accessToken, logout, useStreaming } = useAuthStore();
   const [message, setMessage] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -51,6 +52,11 @@ function ChatPage() {
         setConversations(data);
       } catch (error) {
         console.error("Error al cargar conversaciones:", error);
+        // Si es error de autenticación, redirigir a login
+        if (error.authError) {
+          logout();
+          navigate("/login");
+        }
       } finally {
         setLoadingConversations(false);
       }
@@ -67,6 +73,11 @@ function ChatPage() {
       setConversations(data);
     } catch (error) {
       console.error("Error al cargar conversaciones:", error);
+      // Si es error de autenticación, redirigir a login
+      if (error.authError) {
+        logout();
+        navigate("/login");
+      }
     } finally {
       setLoadingConversations(false);
     }
@@ -96,6 +107,11 @@ function ChatPage() {
       }
     } catch (error) {
       console.error("Error al cargar mensajes de la conversación:", error);
+      // Si es error de autenticación, redirigir a login
+      if (error.authError) {
+        logout();
+        navigate("/login");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -104,6 +120,36 @@ function ChatPage() {
   const handleNewConversation = () => {
     setMessages([]);
     setConversationId(null);
+  };
+
+  const handleDeleteAllConversations = async () => {
+    // Confirmar antes de eliminar
+    if (
+      !window.confirm(
+        "¿Estás seguro de que deseas eliminar todas las conversaciones? Esta acción no se puede deshacer."
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await conversationService.deleteAllConversations(accessToken);
+
+      // Limpiar el estado local
+      setConversations([]);
+      setMessages([]);
+      setConversationId(null);
+
+      // Recargar conversaciones
+      await loadConversations();
+    } catch (error) {
+      console.error("Error al eliminar conversaciones:", error);
+      // Si es error de autenticación, redirigir a login
+      if (error.authError) {
+        logout();
+        navigate("/login");
+      }
+    }
   };
 
   const handleLogout = () => {
@@ -141,29 +187,66 @@ function ChatPage() {
     setMessages((prev) => [...prev, botMessage]);
 
     try {
-      await chatService.sendMessage(
-        userMessageText,
-        conversationId,
-        accessToken,
-        // Callback para actualizar el texto del bot en tiempo real
-        (accumulatedText) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId ? { ...msg, text: accumulatedText } : msg
-            )
-          );
-        },
-        // Callback para guardar el conversation_id
-        (newConversationId) => {
-          if (!conversationId) {
-            setConversationId(newConversationId);
-            // Recargar la lista de conversaciones para mostrar la nueva
-            loadConversations();
+      if (useStreaming) {
+        // Modo streaming
+        await chatService.sendMessage(
+          userMessageText,
+          conversationId,
+          accessToken,
+          // Callback para actualizar el texto del bot en tiempo real
+          (accumulatedText) => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === botMessageId
+                  ? { ...msg, text: accumulatedText }
+                  : msg
+              )
+            );
+          },
+          // Callback para guardar el conversation_id
+          (newConversationId) => {
+            if (!conversationId) {
+              setConversationId(newConversationId);
+              // Recargar la lista de conversaciones para mostrar la nueva
+              loadConversations();
+            }
           }
+        );
+      } else {
+        // Modo normal (sin streaming)
+        const response = await chatService.sendMessageNormal(
+          userMessageText,
+          conversationId,
+          accessToken
+        );
+
+        // Actualizar el conversation_id si es nuevo
+        if (!conversationId && response.conversation_id) {
+          setConversationId(response.conversation_id);
+          loadConversations();
         }
-      );
+
+        // Actualizar el mensaje del bot con la respuesta completa
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId
+              ? {
+                  ...msg,
+                  text: response.response || response.bot_message.content,
+                }
+              : msg
+          )
+        );
+      }
     } catch (error) {
       console.error("Error en chat:", error);
+
+      // Si es error de autenticación, redirigir a login
+      if (error.authError) {
+        logout();
+        navigate("/login");
+        return;
+      }
 
       // Actualizar el mensaje del bot con un error
       setMessages((prev) =>
@@ -190,7 +273,7 @@ function ChatPage() {
         } lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-50 w-72 bg-gray-900 border-r border-gray-800 transition-transform duration-300 ease-in-out flex flex-col`}
       >
         {/* Sidebar Header */}
-        <div className="p-5 border-b border-gray-800">
+        <div className="p-5 border-b border-gray-800 space-y-3">
           <button
             onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors"
@@ -209,6 +292,27 @@ function ChatPage() {
               />
             </svg>
             <span className="text-sm font-medium">Nueva conversación</span>
+          </button>
+
+          <button
+            onClick={handleDeleteAllConversations}
+            disabled={conversations.length === 0}
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+            <span className="text-sm font-medium">Eliminar todas</span>
           </button>
         </div>
 
@@ -251,6 +355,35 @@ function ChatPage() {
               ))
             )}
           </div>
+        </div>
+
+        {/* Settings Section */}
+        <div className="p-5 border-t border-gray-800">
+          <button
+            onClick={() => navigate("/config")}
+            className="w-full flex items-center gap-3 px-4 py-3 text-gray-400 hover:bg-gray-800 hover:text-white rounded-lg transition-colors"
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+            <span className="text-sm font-medium">Configuración</span>
+          </button>
         </div>
 
         {/* User Section */}
@@ -414,16 +547,85 @@ function ChatPage() {
                             : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm shadow-sm"
                         }`}
                       >
-                        <p className="text-base whitespace-pre-wrap leading-relaxed">
+                        <div className="text-base leading-relaxed markdown-content">
                           {msg.sender === "bot" && isLastBotMessage ? (
                             <StreamingText
                               text={msg.text}
                               isStreaming={isLastBotMessage}
                             />
+                          ) : msg.sender === "bot" ? (
+                            <ReactMarkdown
+                              components={{
+                                p: ({ children }) => (
+                                  <p className="mb-2 last:mb-0">{children}</p>
+                                ),
+                                strong: ({ children }) => (
+                                  <strong className="font-bold">
+                                    {children}
+                                  </strong>
+                                ),
+                                em: ({ children }) => (
+                                  <em className="italic">{children}</em>
+                                ),
+                                code: ({ inline, children }) =>
+                                  inline ? (
+                                    <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-red-600">
+                                      {children}
+                                    </code>
+                                  ) : (
+                                    <code className="block bg-gray-800 text-gray-100 p-3 rounded text-sm font-mono overflow-x-auto my-2">
+                                      {children}
+                                    </code>
+                                  ),
+                                pre: ({ children }) => (
+                                  <pre className="my-2">{children}</pre>
+                                ),
+                                ul: ({ children }) => (
+                                  <ul className="list-disc list-inside my-2 space-y-1">
+                                    {children}
+                                  </ul>
+                                ),
+                                ol: ({ children }) => (
+                                  <ol className="list-decimal list-inside my-2 space-y-1">
+                                    {children}
+                                  </ol>
+                                ),
+                                li: ({ children }) => (
+                                  <li className="ml-2">{children}</li>
+                                ),
+                                a: ({ href, children }) => (
+                                  <a
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    {children}
+                                  </a>
+                                ),
+                                h1: ({ children }) => (
+                                  <h1 className="text-2xl font-bold my-2">
+                                    {children}
+                                  </h1>
+                                ),
+                                h2: ({ children }) => (
+                                  <h2 className="text-xl font-bold my-2">
+                                    {children}
+                                  </h2>
+                                ),
+                                h3: ({ children }) => (
+                                  <h3 className="text-lg font-bold my-2">
+                                    {children}
+                                  </h3>
+                                ),
+                              }}
+                            >
+                              {msg.text}
+                            </ReactMarkdown>
                           ) : (
-                            msg.text
+                            <p className="whitespace-pre-wrap">{msg.text}</p>
                           )}
-                        </p>
+                        </div>
                       </div>
                       <span className="text-xs text-gray-500 mt-2 px-2">
                         {msg.timestamp.toLocaleTimeString("es-ES", {
