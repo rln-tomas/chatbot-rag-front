@@ -8,6 +8,7 @@ const useAuthStore = create(
       accessToken: null,
       refreshToken: null,
       isAuthenticated: false,
+      useStreaming: true, // Por defecto usar streaming
 
       login: (userData, accessToken, refreshToken) => {
         set({
@@ -33,6 +34,10 @@ const useAuthStore = create(
           refreshToken,
         });
       },
+
+      setUseStreaming: (useStreaming) => {
+        set({ useStreaming });
+      },
     }),
     {
       name: "auth-storage", // nombre de la clave en localStorage
@@ -41,6 +46,7 @@ const useAuthStore = create(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
+        useStreaming: state.useStreaming,
       }),
     }
   )
