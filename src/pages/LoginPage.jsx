@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import useAuthStore from "../store/authStore";
 import { validateLoginForm } from "../utils/validation";
-// import axios from 'axios';
+import axios from "axios";
+
+const API_URL = import.meta.env.VITE_API_URL;
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -44,23 +46,26 @@ function LoginPage() {
     }
 
     try {
-      // TODO: Conectar con la API cuando esté lista
-      // const response = await axios.post('/api/auth/login', {
-      //   email: formData.email,
-      //   password: formData.password
-      // });
-
-      // Simulación de login exitoso
-      const mockUser = {
+      const response = await axios.post(`${API_URL}/api/v1/auth/login`, {
         email: formData.email,
-        name: "Usuario",
+        password: formData.password,
+      });
+
+      const { access_token, refresh_token } = response.data;
+
+      // Guardar el usuario autenticado con los tokens
+      const user = {
+        email: formData.email,
       };
 
-      login(mockUser);
+      login(user, access_token, refresh_token);
       navigate("/chat");
     } catch (error) {
       console.error("Error en login:", error);
-      setErrors({ general: "Error al iniciar sesión" });
+      const errorMessage =
+        error.response?.data?.message ||
+        "Error al iniciar sesión. Verifica tus credenciales.";
+      setErrors({ general: errorMessage });
     }
   };
 
