@@ -1,44 +1,157 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import useAuthStore from "../store/authStore";
+import chatService from "../services/chatService";
+import conversationService from "../services/conversationService";
 
 function ChatPage() {
   const navigate = useNavigate();
-  const { user, logout } = useAuthStore();
+  const { user, accessToken, logout } = useAuthStore();
   const [message, setMessage] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [messages, setMessages] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [conversations, setConversations] = useState([]);
+  const [loadingConversations, setLoadingConversations] = useState(true);
+
+  // Cargar conversaciones al montar el componente
+  useEffect(() => {
+    const loadConversations = async () => {
+      try {
+        setLoadingConversations(true);
+        const data = await conversationService.getConversations(accessToken);
+        setConversations(data);
+      } catch (error) {
+        console.error("Error al cargar conversaciones:", error);
+      } finally {
+        setLoadingConversations(false);
+      }
+    };
+
+    loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadConversations = async () => {
+    try {
+      setLoadingConversations(true);
+      const data = await conversationService.getConversations(accessToken);
+      setConversations(data);
+    } catch (error) {
+      console.error("Error al cargar conversaciones:", error);
+    } finally {
+      setLoadingConversations(false);
+    }
+  };
+
+  const handleSelectConversation = async (convId) => {
+    try {
+      setConversationId(convId);
+      setMessages([]);
+      setIsLoading(true);
+
+      // Cargar los mensajes de la conversación
+      const conversationData = await conversationService.getConversationById(
+        convId,
+        accessToken
+      );
+
+      // Transformar los mensajes del backend al formato del componente
+      if (conversationData.messages && conversationData.messages.length > 0) {
+        const formattedMessages = conversationData.messages.map((msg) => ({
+          id: msg.id,
+          text: msg.content,
+          sender: msg.is_user_message ? "user" : "bot",
+          timestamp: new Date(msg.created_at),
+        }));
+        setMessages(formattedMessages);
+      }
+    } catch (error) {
+      console.error("Error al cargar mensajes de la conversación:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleNewConversation = () => {
+    setMessages([]);
+    setConversationId(null);
+  };
 
   const handleLogout = () => {
     logout();
     navigate("/login");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!message.trim()) return;
+    if (!message.trim() || isLoading) return;
+
+    const userMessageText = message.trim();
+    setMessage("");
+    setIsLoading(true);
 
     // Agregar mensaje del usuario
     const userMessage = {
       id: Date.now(),
-      text: message,
+      text: userMessageText,
       sender: "user",
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setMessage("");
 
-    // Simular respuesta del bot (TODO: conectar con API)
-    setTimeout(() => {
-      const botMessage = {
-        id: Date.now(),
-        text: "Esta es una respuesta simulada. Conecta la API para obtener respuestas reales.",
-        sender: "bot",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, botMessage]);
-    }, 1000);
+    // Crear mensaje del bot vacío que se irá llenando con el streaming
+    const botMessageId = Date.now() + 1;
+    const botMessage = {
+      id: botMessageId,
+      text: "",
+      sender: "bot",
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, botMessage]);
+
+    try {
+      await chatService.sendMessage(
+        userMessageText,
+        conversationId,
+        accessToken,
+        // Callback para actualizar el texto del bot en tiempo real
+        (accumulatedText) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId ? { ...msg, text: accumulatedText } : msg
+            )
+          );
+        },
+        // Callback para guardar el conversation_id
+        (newConversationId) => {
+          if (!conversationId) {
+            setConversationId(newConversationId);
+            // Recargar la lista de conversaciones para mostrar la nueva
+            loadConversations();
+          }
+        }
+      );
+    } catch (error) {
+      console.error("Error en chat:", error);
+
+      // Actualizar el mensaje del bot con un error
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? {
+                ...msg,
+                text: "Lo siento, hubo un error al procesar tu mensaje. Por favor, intenta de nuevo.",
+              }
+            : msg
+        )
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -52,7 +165,7 @@ function ChatPage() {
         {/* Sidebar Header */}
         <div className="p-5 border-b border-gray-800">
           <button
-            onClick={() => setMessages([])}
+            onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors"
           >
             <svg
@@ -78,10 +191,38 @@ function ChatPage() {
             <div className="px-3 py-2 text-gray-400 text-xs font-semibold uppercase tracking-wider">
               Historial
             </div>
-            {/* Placeholder para historial de chats */}
-            <div className="px-4 py-3 text-gray-400 text-sm rounded-lg hover:bg-gray-800 cursor-pointer transition-colors">
-              Chat actual
-            </div>
+            {loadingConversations ? (
+              <div className="px-4 py-3 text-gray-500 text-sm text-center">
+                Cargando...
+              </div>
+            ) : conversations.length === 0 ? (
+              <div className="px-4 py-3 text-gray-500 text-sm text-center">
+                No hay conversaciones
+              </div>
+            ) : (
+              conversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  onClick={() => handleSelectConversation(conv.id)}
+                  className={`w-full px-4 py-3 text-left text-sm rounded-lg hover:bg-gray-800 cursor-pointer transition-colors ${
+                    conversationId === conv.id
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <p className="font-medium truncate">
+                    {conv.title || "Nueva conversación"}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                    <span>{conv.message_count} mensajes</span>
+                    <span>•</span>
+                    <span>
+                      {new Date(conv.updated_at).toLocaleDateString("es-ES")}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </div>
 
@@ -278,27 +419,50 @@ function ChatPage() {
                 }}
                 placeholder="Escribe tu mensaje..."
                 rows="1"
-                className="flex-1 px-5 py-4 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none max-h-32 text-base min-h-[56px]"
+                disabled={isLoading}
+                className="flex-1 px-5 py-4 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none max-h-32 text-base min-h-[56px] disabled:bg-gray-100 disabled:cursor-not-allowed"
               />
               <button
                 type="submit"
-                disabled={!message.trim()}
+                disabled={!message.trim() || isLoading}
                 className="w-14 h-14 flex items-center justify-center bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all duration-200 disabled:opacity-50 flex-shrink-0"
                 title="Enviar mensaje"
               >
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                  />
-                </svg>
+                {isLoading ? (
+                  <svg
+                    className="w-6 h-6 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                    />
+                  </svg>
+                )}
               </button>
             </div>
           </form>
